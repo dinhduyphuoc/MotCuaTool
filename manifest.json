@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "MotCuaTool by Duy Phuoc",
+  "version": "1.0.1",
+  "description": "Extension hỗ trợ thao tác trên hệ thống Một Cửa Bộ Quốc Phòng.",
+  "permissions": ["storage", "scripting", "activeTab"],
+  "host_permissions": ["https://motcua.mod.gov.vn/*"],
+  "options_page": "options.html",
+  "background": { "service_worker": "service-worker.js" },
+  "content_scripts": [
+    {
+      "matches": ["https://motcua.mod.gov.vn/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
