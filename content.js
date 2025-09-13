@@ -140,7 +140,7 @@
         <div style="margin-top:10px;padding-top:8px;border-top:1px dashed #444;display:grid;gap:6px">
           <label style="display:flex;gap:8px;align-items:center;cursor:pointer">
             <input id="mct-cb-redirect" type="checkbox" />
-            <span>Sau khi “Lưu lại” → Redirect về danh sách</span>
+            <span>Tự động mở lại form sau khi lưu</span>
           </label>
           <label style="display:flex;gap:8px;align-items:center;cursor:pointer">
             <input id="mct-cb-precompute" type="checkbox" />
@@ -200,7 +200,7 @@
   }
   function updatePanelHeader(){
     const sub = panel?.querySelector("#mct-sub"); if (!sub) return;
-    sub.textContent = `MOD=${CFG.MOD}, Residue=${CFG.RESIDUE} | AutoSubmit:${CFG.autoResubmit?'ON':'OFF'} | Redirect:${CFG.redirectAfterSave?'ON':'OFF'} | PreSubmit:${CFG.precomputeBeforeSubmit?'ON':'OFF'}`;
+    sub.textContent = `Tổng máy = ${CFG.MOD}, ID máy hiện tại = ${CFG.RESIDUE}`;
   }
   function syncCheckboxes(){
     if (cbRedirect)   cbRedirect.checked   = !!CFG.redirectAfterSave;
