@@ -2,13 +2,14 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>MotCuaTool by Duy Phuoc</title>
+  <title>MotCuaTool by Duy Phuoc – Cấu hình</title>
   <style>
     body { font: 14px/1.4 system-ui, sans-serif; padding: 16px; }
     label { display:block; margin-top: 10px; }
     input[type="number"], input[type="text"] { width: 520px; max-width: 100%; }
     .hint { color:#666; font-size:12px; }
     .ok { color:green; }
+    .err { color:#c00; }
   </style>
 </head>
 <body>
@@ -24,61 +25,28 @@
   <div class="hint">Mỗi máy chọn một residue khác nhau để không trùng.</div>
 
   <label>XPath ô “Mã hồ sơ”:
-    <input id="XPATH" type="text" />
+    <input id="XPATH" type="text" placeholder="//*[@id='app_user_profile']/.../input hoặc //input[@jf-ext-cache-id='10']" />
   </label>
-  <div class="hint">Mặc định khớp input có <code>jf-ext-cache-id="10"</code>.</div>
 
   <label>CSS selector nút “Lưu lại”:
-    <input id="submitSelector" type="text" />
+    <input id="submitSelector" type="text" placeholder="mặc định: button[jf-ext-button-ct='lưu lại']" />
   </label>
 
-  <label>Regex phát hiện lỗi trùng:
-    <input id="errorTextRegex" type="text" />
+  <label>Regex phát hiện lỗi trùng (toast):
+    <input id="errorTextRegex" type="text" placeholder="(mã hồ sơ|đã được sử dụng|trùng)" />
   </label>
 
   <label>Bảng “Danh sách mã hồ sơ” (selector dòng):
-    <input id="tableSelector" type="text" />
+    <input id="tableSelector" type="text" placeholder="div.v-card__text table tbody tr" />
   </label>
-  <div class="hint">Mặc định quét <code>div.v-card__text table tbody tr</code>, lấy cột 3.</div>
+  <div class="hint">Mặc định quét cột 3 của mỗi hàng.</div>
 
-  <label><input id="autoResubmit" type="checkbox" /> Tự động tăng mã &amp; bấm “Lưu lại” khi trùng</label>
+  <label><input id="autoResubmit" type="checkbox" /> Tự động tăng mã &amp; bấm “Lưu lại” khi trùng (toast)</label>
+  <label><input id="redirectAfterSave" type="checkbox" /> Sau khi bấm “Lưu lại” → tự redirect về trang thêm mới</label>
 
-  <p><button id="save">Lưu</button> <span id="status"></span></p>
+  <p><button id="save">Lưu</button> <span id="status" aria-live="polite"></span></p>
 
-  <script>
-    function load() {
-      chrome.storage.sync.get(null, (cfg) => {
-        MOD.value = cfg.MOD ?? 4;
-        RESIDUE.value = cfg.RESIDUE ?? 0;
-        XPATH.value = cfg.XPATH ?? '';
-        submitSelector.value = cfg.submitSelector ?? 'button[jf-ext-button-ct="lưu lại"]';
-        errorTextRegex.value = cfg.errorTextRegex ?? 'đã được sử dụng|đã tồn tại|trùng|duplicate|already used|already exists';
-        tableSelector.value = cfg.tableSelector ?? 'div.v-card__text table tbody tr';
-        autoResubmit.checked = !!cfg.autoResubmit;
-      });
-    }
-    function save() {
-      const data = {
-        MOD: parseInt(MOD.value,10),
-        RESIDUE: parseInt(RESIDUE.value,10),
-        XPATH: XPATH.value.trim(),
-        submitSelector: submitSelector.value.trim(),
-        errorTextRegex: errorTextRegex.value.trim(),
-        tableSelector: tableSelector.value.trim(),
-        autoResubmit: autoResubmit.checked
-      };
-      if (!(data.MOD>=1) || !(data.RESIDUE>=0 && data.RESIDUE < data.MOD)) {
-        alert('Kiểm tra MOD và Residue (0..MOD-1).');
-        return;
-      }
-      chrome.storage.sync.set(data, () => {
-        status.textContent = 'Đã lưu.';
-        status.className = 'ok';
-        setTimeout(()=>{ status.textContent=''; status.className=''; }, 1500);
-      });
-    }
-    document.getElementById('save').addEventListener('click', save);
-    document.addEventListener('DOMContentLoaded', load);
-  </script>
+  <script src="options.js"></script>
+  <script src="injected.js"></script> 
 </body>
 </html>

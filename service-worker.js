@@ -11,7 +11,9 @@ chrome.runtime.onInstalled.addListener(() => {
       errorTextRegex: "đã được sử dụng|đã tồn tại|trùng|duplicate|already used|already exists",
       autoResubmit: true,
       // Bảng trong dialog “Danh sách mã hồ sơ” – cột 3 là Mã hồ sơ
-      tableSelector: 'div.v-card__text table tbody tr'
+      tableSelector: 'div.v-card__text table tbody tr',
+      // Tự động chuyển trang sau khi lưu thành công
+      redirectAfterSave: false,
     };
     chrome.storage.sync.set(Object.assign({}, defaults, cfg));
   });

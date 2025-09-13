@@ -1,346 +1,443 @@
+// ========================= MotCuaTool — ONLY from server latest =========================
 (() => {
-/***** ========= CONFIG ========= *****/
-// Tổng số máy và residue (số thứ tự máy này trong [0..MOD-1])
-const MOD = 4;
-const RESIDUE = 0; // <-- đổi 0,1,2,3 tùy từng máy
+  // ---------- GUARD ----------
+  if (!window.__MCT__) window.__MCT__ = {};
+  if (window.__MCT__.booted) return;
+  window.__MCT__.booted = true;
 
-// XPaths theo bạn cung cấp
-const FIELD_XPATH = '//*[@id="app_user_profile"]/div[11]/main/div/div/div[2]/form/div[4]/div[2]/div[2]/div/div[1]/div/input';
-const FIELD_FALLBACK_XPATH = '//*[@id="app_user_profile"]//input[@jf-ext-cache-id="10"]';
-const SAVE_BTN_XPATH = '//*[@id="app_user_profile"]/div[13]/main/div/div/div[3]/button[2]/div';
+  // ---------- CONFIG ----------
+  const CFG = {
+    MOD: 4,
+    RESIDUE: 0,
+    XPATH: "",
+    submitSelector: "button[jf-ext-button-ct='lưu lại'], button[jf-ext-button-ct='lưu lại']",
+    errorTextRegex: "(mã hồ sơ|đã được sử dụng|trùng)",
+    autoResubmit: true,
+    redirectAfterSave: false,
+    precomputeBeforeSubmit: true,
+    allowLocalFallback: false,
+  };
+  const REDIRECT_URL = "https://motcua.mod.gov.vn/web/mot-cua-bo-quoc-phong/qlkdl#/all/them-moi-giay-to";
 
-// Selector phụ trợ (phòng khi nút lưu đổi class)
-const SUBMIT_SELECTOR = 'button[jf-ext-button-ct="lưu lại"], .v-btn.primary--text, .v-btn.primary';
+  // ---------- RUNTIME STATE ----------
+  window.__MCT__.PAGE_CTX = window.__MCT__.PAGE_CTX || { token:"", groupId:"", companyId:"" };
+  window.__MCT__.latestCache = window.__MCT__.latestCache || { value:null, ts:0, inflight:null };
+  window.__MCT__.pos = window.__MCT__.pos || null;
+  if (!window.__MCT__.applyGuard) window.__MCT__.applyGuard = { to:"", ts:0 };
+  const APPLY_WINDOW = 1000; // ms
 
-// Redirect (tùy chọn)
-const REDIRECT_URL = 'https://motcua.mod.gov.vn/web/mot-cua-bo-quoc-phong/qlkdl#/all/them-moi-giay-to';
-const REDIRECT_DELAY_MS = 1200;
+  // ---------- STORAGE ----------
+  function loadCfg(){
+    return new Promise(res => chrome.storage.sync.get(null, d => { Object.assign(CFG, d||{}); res(CFG); }));
+  }
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== "sync") return;
+    Object.keys(changes).forEach(k => CFG[k] = changes[k].newValue);
+    try { updatePanelHeader(); syncCheckboxes(); } catch {}
+  });
 
-// Retry khi trùng mã
-const MAX_RETRIES = 5;
-const RETRY_DELAY_MS = 350;
-
-// Mẫu text có thể xuất hiện khi trùng mã
-const ERROR_TEXT_REGEX = /đã được sử dụng|đã tồn tại|mã (?:hồ\s*sơ|hs)\s*đã\s*dùng|trùng|duplicate|already\s*(?:used|exists)/i;
-
-
-/***** ========= GLOBAL STATE (không lưu qua reload) ========= *****/
-let AUTO_REDIRECT = false;   // OFF mặc định mỗi lần tải trang
-let _redirectTimer = null;   // chỉ khai báo duy nhất 1 lần
-let _retryCount = 0;
-
-
-/***** ========= UTILS ========= *****/
-function xEval(xpath, context=document) {
-  try {
-    return document.evaluate(xpath, context, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue || null;
-  } catch { return null; }
-}
-function waitFor(fn, {timeout=20000, interval=120} = {}) {
-  return new Promise(resolve => {
+  // ---------- UTILS ----------
+  const sleep = (ms)=>new Promise(r=>setTimeout(r,ms));
+  function debounce(fn,ms){ let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a),ms); }; }
+  function waitFor(fnOrSel, timeout=15000, interval=200){
     const t0 = Date.now();
-    const it = setInterval(() => {
-      try {
-        const v = fn();
-        if (v) { clearInterval(it); resolve(v); }
-        else if (Date.now() - t0 > timeout) { clearInterval(it); resolve(null); }
-      } catch { clearInterval(it); resolve(null); }
-    }, interval);
-  });
-}
-function hasPattern(v) { return /-\d{6}-\d+$/.test(v || ''); }
-function parseXXXX(fullCode) { const m = String(fullCode || '').match(/(\d+)\s*$/); return m ? parseInt(m[1],10) : null; }
-function replaceXXXX(fullCode, newXXXX) {
-  const padded = String(newXXXX).padStart(4, '0'); // luôn 4 chữ số
-  return String(fullCode || '').replace(/(\d+)\s*$/, padded);
-}
+    return new Promise(async (resolve,reject)=>{
+      while (Date.now()-t0 < timeout){
+        try{
+          const el = (typeof fnOrSel==="string") ? document.querySelector(fnOrSel) : fnOrSel();
+          if (el) return resolve(el);
+        }catch{}
+        await sleep(interval);
+      }
+      reject(new Error("waitFor timeout"));
+    });
+  }
+  function findByXPaths(xps){
+    for (const xp of xps){
+      try{
+        const el = document.evaluate(xp, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+        if (el) return el;
+      }catch{}
+    }
+    return null;
+  }
 
-// Số nhỏ nhất > fromExclusive và ≡ RESIDUE (mod MOD)
-function nextByMod(fromExclusive, MOD, RESIDUE) {
-  const start = fromExclusive + 1;
-  const delta = (RESIDUE - (start % MOD) + MOD) % MOD;
-  return start + delta;
-}
-function fillInput(input, val) {
-  input.focus();
-  input.value = val;
-  input.dispatchEvent(new Event('input',  {bubbles:true}));
-  input.dispatchEvent(new Event('change', {bubbles:true}));
-}
-function getField() { return xEval(FIELD_XPATH) || xEval(FIELD_FALLBACK_XPATH) || null; }
+  // ---------- NUMBERING ----------
+  const parseXXXX = (code)=> {
+    const m = String(code||"").match(/(\d+)\s*$/);
+    return m ? parseInt(m[1],10) : 0;
+  };
+  const replaceXXXX = (fullCode,newXXXX)=>
+    String(fullCode||"").replace(/(\d+)\s*$/, String(newXXXX).padStart(4,"0"));
 
+  // 🔁 CHỈ SỬA HÀM NÀY
+  function nextByMod(x, mod, residue){
+    // trả về số nhỏ nhất y > x sao cho y ≡ residue (mod mod)
+    if (!Number.isFinite(x)) x = 0;
+    if (!Number.isFinite(mod) || mod < 1) mod = 1;
+    if (!Number.isFinite(residue)) residue = 0;
 
-/***** ========= DRAG (kéo panel) ========= *****/
-function makeDraggable(box, handle) {
-  let dragging = false;
-  let startX = 0, startY = 0, startLeft = 0, startTop = 0;
+    // chuẩn hóa residue về [0, mod-1]
+    residue = ((residue % mod) + mod) % mod;
 
-  handle.style.cursor = 'grab';
-  handle.addEventListener('pointerdown', (e) => {
-    if (e.button !== 0) return;
-    dragging = true;
-    handle.setPointerCapture(e.pointerId);
-    handle.style.cursor = 'grabbing';
+    // k = floor((x - residue)/mod) + 1  => y = k*mod + residue  (> x và đúng residue)
+    const k = Math.floor((x - residue) / mod) + 1;
+    return k * mod + residue;
+  }
+  // ---------- /NUMBERING ----------
 
-    const rect = box.getBoundingClientRect();
-    box.style.left = `${rect.left}px`;
-    box.style.top  = `${rect.top}px`;
-    box.style.right = 'auto';
-    box.style.bottom = 'auto';
+  // ---------- INPUT FIELD ----------
+  function getCodeInput(){
+    const defaults = [
+      "//*[@id='app_user_profile']/div[11]/main/div/div/div[2]/form/div[3]/div[2]/div[2]/div/div[2]/div/div/input",
+      "//*[@id='app_user_profile']/div[11]/main/div/div/div[2]/form/div[4]/div[2]/div[2]/div/div[1]/div/input",
+      "//input[@jf-ext-cache-id='10']"
+    ];
+    const xps = (CFG.XPATH && CFG.XPATH.trim()) ? [CFG.XPATH.trim(), ...defaults] : defaults;
+    const el = findByXPaths(xps);
+    return (el && el.tagName === "INPUT") ? el : null;
+  }
 
-    startX = e.clientX;
-    startY = e.clientY;
-    startLeft = rect.left;
-    startTop  = rect.top;
-
-    e.preventDefault();
-    e.stopPropagation();
-
-    const onMove = (ev) => {
-      if (!dragging) return;
-      const dx = ev.clientX - startX;
-      const dy = ev.clientY - startY;
-      let newLeft = startLeft + dx;
-      let newTop  = startTop + dy;
-
-      const vw = window.innerWidth;
-      const vh = window.innerHeight;
-      const bw = box.offsetWidth;
-      const bh = box.offsetHeight;
-      const pad = 4;
-      newLeft = Math.max(pad, Math.min(vw - bw - pad, newLeft));
-      newTop  = Math.max(pad, Math.min(vh - bh - pad, newTop));
-
-      box.style.left = `${newLeft}px`;
-      box.style.top  = `${newTop}px`;
-    };
-
-    const onUp = (ev) => {
-      dragging = false;
-      try { handle.releasePointerCapture(ev.pointerId); } catch {}
-      handle.style.cursor = 'grab';
-      window.removeEventListener('pointermove', onMove, true);
-      window.removeEventListener('pointerup', onUp, true);
-    };
-
-    window.addEventListener('pointermove', onMove, true);
-    window.addEventListener('pointerup', onUp, true);
-  }, { passive: false });
-}
-
-
-/***** ========= PANEL ========= *****/
-function ensurePanel() {
-  if (document.getElementById('idmod-panel')) return;
-  const div = document.createElement('div');
-  div.id = 'idmod-panel';
-  div.style.cssText = `
-    position:fixed;bottom:16px;right:16px;z-index:2147483647;
-    background:#111;color:#fff;font:13px/1.45 system-ui,sans-serif;
-    padding:0;border-radius:10px;box-shadow:0 6px 20px rgba(0,0,0,.35);max-width:380px;
-    user-select:none; -webkit-user-select:none;
-  `;
-  div.innerHTML = `
-    <div id="idmod-handle" style="
-      display:flex;align-items:center;justify-content:space-between;
-      padding:10px 12px;border-radius:10px 10px 0 0;background:#1f2937;
-      border-bottom:1px solid rgba(255,255,255,.08);
-    ">
-      <div style="font-weight:700;">MotCuaTool</div>
-      <div style="opacity:.85;font-size:12px;">Tổng máy=${MOD}, ID máy=${RESIDUE}</div>
-    </div>
-    <div style="padding:10px 12px;">
-      <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px;cursor:pointer">
-        <input id="idmod-autoredirect" type="checkbox" style="accent-color:#4ade80;cursor:pointer">
-        <span>Tự về lại form sau khi bấm “Lưu lại”</span>
-      </label>
-      <div style="font-size:12px;margin-bottom:6px">
-        <div>Trước khi tăng: <code id="idmod-prev">—</code></div>
-        <div>Đã tăng thành: <code id="idmod-now">—</code></div>
-        <div>Kế tiếp (nếu cần): <code id="idmod-next">—</code></div>
+  // ---------- PANEL UI ----------
+  let panel, header, bodyWrap, btnMin, lblLatest, lblUpdated, cbRedirect, cbPrecompute, btnUpdate; // FIX: khai báo btnUpdate
+  function applySavedPos(box){
+    const pos = window.__MCT__.pos; if (!pos) return;
+    Object.assign(box.style, { left:pos.left, top:pos.top, right:"auto", position:"fixed" });
+  }
+  function buildPanel(){
+    if (panel) return panel;
+    panel = document.createElement("div");
+    panel.id = "mct-panel";
+    Object.assign(panel.style, {
+      position:"fixed", top:"12px", right:"12px", zIndex:2147483647,
+      background:"#111", color:"#fff", padding:"10px 12px",
+      borderRadius:"10px", boxShadow:"0 10px 30px rgba(0,0,0,.35)",
+      width:"320px", font:"13px/1.4 system-ui, -apple-system, Segoe UI, Roboto, sans-serif",
+      userSelect:"none"
+    });
+    panel.innerHTML = `
+      <div id="mct-header" style="display:flex;align-items:center;justify-content:space-between;font-weight:700;margin-bottom:6px;cursor:move">
+        <span>MotCuaTool by Duy Phước</span>
+        <button id="mct-min" title="Thu gọn / Mở rộng" style="cursor:pointer;border:none;background:#222;color:#fff;padding:2px 8px;border-radius:6px;font-weight:700">–</button>
       </div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button id="idmod-bump1" style="padding:6px 10px;border:0;border-radius:8px;cursor:pointer;background:#374151;color:#fff">Tăng thêm 1 bước</button>
-        <button id="idmod-refresh" style="padding:6px 10px;border:0;border-radius:8px;cursor:pointer;background:#374151;color:#fff">Tính lại</button>
+
+      <div id="mct-body">
+        <div id="mct-sub" style="opacity:.85;margin-bottom:6px"></div>
+
+        <div class="mct-row">
+          <span class="mct-label">Mới nhất:</span>
+          <code id="mct-latest" class="mct-pill mct-pill-warn">-</code>
+        </div>
+        <div class="mct-row">
+          <span class="mct-label">Đã cập nhật:</span>
+          <code id="mct-updated" class="mct-pill mct-pill-ok">-</code>
+        </div>
+
+        <div style="margin-top:8px;display:flex;gap:10px">
+          <button id="mct-step" class="mct-btn">Cập nhật</button>
+        </div>
+
+        <div style="margin-top:10px;padding-top:8px;border-top:1px dashed #444;display:grid;gap:6px">
+          <label style="display:flex;gap:8px;align-items:center;cursor:pointer">
+            <input id="mct-cb-redirect" type="checkbox" />
+            <span>Sau khi “Lưu lại” → Redirect về danh sách</span>
+          </label>
+          <label style="display:flex;gap:8px;align-items:center;cursor:pointer">
+            <input id="mct-cb-precompute" type="checkbox" />
+            <span>Tự cập nhật mã hồ sơ ngay trước khi lưu</span>
+          </label>
+        </div>
       </div>
-    </div>
-  `;
-  document.body.appendChild(div);
+    `;
+    const styleEl = document.createElement("style");
+    styleEl.textContent = `
+      .mct-btn{flex:1;background:#2563eb;color:#fff;border:none;border-radius:6px;padding:6px 10px;cursor:pointer;font-weight:600;font-size:13px;transition:background .2s,transform .1s}
+      .mct-btn:hover{background:#1d4ed8}.mct-btn:active{transform:scale(.96)}
 
-  makeDraggable(div, div.querySelector('#idmod-handle'));
+      .mct-row{display:flex;align-items:center;gap:8px;margin:4px 0;flex-wrap:nowrap}
+      .mct-label{min-width:90px;color:#e5e7eb}
+      .mct-pill{padding:2px 8px;border-radius:6px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:nowrap}
+      .mct-pill-warn{background:#fff3cd;color:#7a5500}
+      .mct-pill-ok{background:#d1e7dd;color:#0a3622}
+    `;
+    panel.appendChild(styleEl);
+    document.body.appendChild(panel);
 
-  document.getElementById('idmod-autoredirect')?.addEventListener('change', (e) => {
-    AUTO_REDIRECT = !!e.target.checked; // reset mỗi reload, không lưu state
-  });
-}
-function updatePanel(prev, now, next) {
-  const s = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v ?? '—'; };
-  s('idmod-prev', prev || '—');
-  s('idmod-now',  now  || '—');
-  s('idmod-next', next || '—');
-}
+    header       = panel.querySelector("#mct-header");
+    bodyWrap     = panel.querySelector("#mct-body");
+    btnMin       = panel.querySelector("#mct-min");
+    lblLatest    = panel.querySelector("#mct-latest");
+    lblUpdated   = panel.querySelector("#mct-updated");
+    cbRedirect   = panel.querySelector("#mct-cb-redirect");
+    cbPrecompute = panel.querySelector("#mct-cb-precompute");
+    btnUpdate    = panel.querySelector("#mct-step");
 
+    applySavedPos(panel);
 
-/***** ========= CORE ========= *****/
-async function main() {
-  ensurePanel();
+    btnMin.addEventListener("click", (e)=>{
+      e.stopPropagation();
+      const hidden = bodyWrap.style.display === "none";
+      bodyWrap.style.display = hidden ? "" : "none";
+      btnMin.textContent = hidden ? "–" : "+";
+    });
 
-  // 1) Chờ ô input xuất hiện và có dạng "...-YYMMDD-XXXX"
-  const input = await waitFor(() => getField(), { timeout: 20000 });
-  if (!input || input.tagName !== 'INPUT') { updatePanel('—', 'Không thấy input theo XPath', '—'); return; }
+    btnUpdate.addEventListener("click", async ()=>{
+      btnUpdate.disabled = true;
+      btnUpdate.textContent = "Đang cập nhật...";
+      try { await applyLatestToField(true); } catch {}
+      btnUpdate.textContent = "Cập nhật";
+      btnUpdate.disabled = false;
+    });
 
-  const ok = await waitFor(() => hasPattern(input.value), { timeout: 20000 });
-  if (!ok) { updatePanel('—', 'Field chưa có dạng -YYMMDD-XXXX', '—'); return; }
+    cbRedirect.checked = !!CFG.redirectAfterSave;
+    cbPrecompute.checked = !!CFG.precomputeBeforeSubmit;
+    cbRedirect.addEventListener("change", ()=> chrome.storage.sync.set({ redirectAfterSave: !!cbRedirect.checked }));
+    cbPrecompute.addEventListener("change", ()=> chrome.storage.sync.set({ precomputeBeforeSubmit: !!cbPrecompute.checked }));
 
-  // 2) Auto bump ngay khi tải trang (không dùng state cũ)
-  const baseline = String(input.value);
-  const curXXXX = parseXXXX(baseline);
-  if (curXXXX == null) { updatePanel(baseline, 'Không đọc được XXXX', '—'); return; }
+    updatePanelHeader();
+    makeDraggable(panel, header);
+    return panel;
+  }
+  function updatePanelHeader(){
+    const sub = panel?.querySelector("#mct-sub"); if (!sub) return;
+    sub.textContent = `MOD=${CFG.MOD}, Residue=${CFG.RESIDUE} | AutoSubmit:${CFG.autoResubmit?'ON':'OFF'} | Redirect:${CFG.redirectAfterSave?'ON':'OFF'} | PreSubmit:${CFG.precomputeBeforeSubmit?'ON':'OFF'}`;
+  }
+  function syncCheckboxes(){
+    if (cbRedirect)   cbRedirect.checked   = !!CFG.redirectAfterSave;
+    if (cbPrecompute) cbPrecompute.checked = !!CFG.precomputeBeforeSubmit;
+  }
+  function makeDraggable(box, handle){
+    let isDown = false, relX=0, relY=0;
+    handle.style.cursor = "move";
+    handle.addEventListener("mousedown", (e)=>{
+      const minBtn = box.querySelector("#mct-min");
+      if (minBtn && (e.target === minBtn || minBtn.contains(e.target))) return;
 
-  const nextXXXX = nextByMod(curXXXX, MOD, RESIDUE);
-  const bumped   = replaceXXXX(baseline, nextXXXX);
-  fillInput(input, bumped);
+      if (e.button !== 0) return;
+      isDown = true;
+      const r = box.getBoundingClientRect();
+      relX = e.clientX - r.left;
+      relY = e.clientY - r.top;
+      Object.assign(box.style, { right:"auto", position:"fixed" });
+      e.preventDefault(); e.stopPropagation();
+    });
+    document.addEventListener("mousemove", (e)=>{
+      if (!isDown) return;
+      box.style.left = (e.clientX - relX) + "px";
+      box.style.top  = (e.clientY - relY) + "px";
+      e.preventDefault(); e.stopPropagation();
+    });
+    document.addEventListener("mouseup", (e)=>{
+      if (e.button !== 0) return;
+      if (isDown){
+        isDown = false;
+        window.__MCT__.pos = { left:box.style.left, top:box.style.top };
+        chrome.storage.sync.set({ panelPos: window.__MCT__.pos });
+        e.preventDefault(); e.stopPropagation();
+      }
+    });
+  }
 
-  const nextXXXX2 = nextByMod(nextXXXX, MOD, RESIDUE);
-  updatePanel(baseline, bumped, replaceXXXX(bumped, nextXXXX2));
+  function setLabels(latest, updated){
+    if (lblLatest)  lblLatest.textContent  = latest  || "-";
+    if (lblUpdated) lblUpdated.textContent = updated || "-";
+  }
 
-  // Nút thao tác tay
-  document.getElementById('idmod-bump1')?.addEventListener('click', () => {
-    const nowFull = String(input.value || '');
-    const nowXXXX = parseXXXX(nowFull); if (nowXXXX == null) return;
-    const nx = nextByMod(nowXXXX, MOD, RESIDUE);
-    const nfull = replaceXXXX(nowFull, nx);
-    fillInput(input, nfull);
-    const nx2 = nextByMod(nx, MOD, RESIDUE);
-    updatePanel(baseline, nfull, replaceXXXX(nfull, nx2));
-  });
-  document.getElementById('idmod-refresh')?.addEventListener('click', () => {
-    const nowFull = String(input.value || '');
-    const nowXXXX = parseXXXX(nowFull);
-    if (nowXXXX == null) { updatePanel(baseline, nowFull, '—'); return; }
-    const nx = nextByMod(nowXXXX, MOD, RESIDUE);
-    updatePanel(baseline, nowFull, replaceXXXX(nowFull, nx));
-  });
-
-  input.addEventListener('input',  () => document.getElementById('idmod-refresh')?.click(), true);
-  input.addEventListener('change', () => document.getElementById('idmod-refresh')?.click(), true);
-
-  attachSubmitHandlers();
-}
-
-
-/***** ========= SUBMIT & DUPLICATE HANDLER ========= *****/
-function safeNextFromField(input) {
-  const nowFull = String(input.value || '');
-  const nowXXXX = parseXXXX(nowFull);
-  if (nowXXXX == null) throw new Error('Không đọc được XXXX hiện tại');
-  const nx = nextByMod(nowXXXX, MOD, RESIDUE);
-  return replaceXXXX(nowFull, nx);
-}
-function clickSubmit() {
-  const xp = xEval(SAVE_BTN_XPATH);
-  const el = xp?.closest('button') || document.querySelector(SUBMIT_SELECTOR) || xp;
-  if (el && !el.disabled) el.click();
-}
-
-function scheduleRedirect() {
-  if (!AUTO_REDIRECT) return;
-  clearTimeout(_redirectTimer);
-  _redirectTimer = setTimeout(() => { location.href = REDIRECT_URL; }, REDIRECT_DELAY_MS);
-}
-function cancelRedirect() { clearTimeout(_redirectTimer); _redirectTimer = null; }
-
-function handleDuplicateFound(where='DOM') {
-  cancelRedirect();
-  if (_retryCount >= MAX_RETRIES) return;
-
-  const input = getField();
-  if (!input) return;
-
+  // ---------- SERVER CTX + API ----------
   try {
-    const bumped = safeNextFromField(input);
-    fillInput(input, bumped);
-    document.getElementById('idmod-refresh')?.click();
-    _retryCount++;
+    const s = document.createElement("script");
+    s.src = chrome.runtime.getURL("injected.js");
+    (document.head || document.documentElement).appendChild(s);
+    s.remove();
+  } catch(e){ console.warn("[MCT] inject failed:", e); }
 
-    setTimeout(() => {
-      clickSubmit();
-      scheduleRedirect();
-    }, RETRY_DELAY_MS);
-  } catch(_) {}
-}
+  addEventListener("message", (ev)=>{
+    if (ev?.data?.type !== "MCT_PAGE_CONTEXT") return;
+    window.__MCT__.PAGE_CTX = ev.data.payload || window.__MCT__.PAGE_CTX;
+  });
 
-function attachSubmitHandlers() {
-  // 1) Trước khi gửi: bump thêm 1 bước
-  document.addEventListener('click', (e) => {
-    const isSave =
-      e.target?.closest(SUBMIT_SELECTOR) ||
-      e.target === xEval(SAVE_BTN_XPATH) ||
-      e.target?.closest('button') === xEval(SAVE_BTN_XPATH)?.closest('button');
-    if (!isSave) return;
+  async function callSuggest({ token, groupId, companyId }){
+    const res = await fetch(`/o/rest/v2/filestoregov/suggest-dossierno`, {
+      method: "GET",
+      credentials: "include",
+      headers: {
+        "Accept": "application/json, text/plain, */*",
+        "X-Requested-With": "XMLHttpRequest",
+        "Token": token || "",
+        "Groupid": groupId || "",
+        ...(companyId ? { "CompanyId": companyId } : {}),
+      }
+    });
+    const ct = res.headers.get("content-type") || "";
+    if (!res.ok){
+      const body = ct.includes("application/json") ? await res.json().catch(()=>null) : await res.text().catch(()=> "");
+      throw new Error(`HTTP ${res.status} ${res.statusText} | Body: ${
+        typeof body === "string" ? body.slice(0,200) : JSON.stringify(body).slice(0,200)
+      }`);
+    }
+    if (!ct.includes("application/json")){
+      const html = await res.text().catch(()=> "");
+      throw new Error(`Unexpected content-type: ${ct} | Body: ${html.slice(0,200)}`);
+    }
+    return res.json();
+  }
+  function waitPageCtx(timeout=2000){
+    const t0 = Date.now();
+    return new Promise((resolve,reject)=>{
+      if (window.__MCT__.PAGE_CTX?.groupId && window.__MCT__.PAGE_CTX?.token) return resolve(window.__MCT__.PAGE_CTX);
+      (function poll(){
+        const c = window.__MCT__.PAGE_CTX;
+        if (c?.groupId && c?.token) return resolve(c);
+        if (Date.now()-t0 > timeout) return reject(new Error("Timeout PAGE_CTX"));
+        setTimeout(poll, 100);
+      })();
+    });
+  }
+  async function MCT_getServerLatest(force=false){
+    const cache = window.__MCT__.latestCache;
+    const now = Date.now();
+    if (!force && cache.value && now-cache.ts < 5000) return cache.value;
+    if (cache.inflight) return cache.inflight;
+    const run = (async ()=>{
+      const ctx = await waitPageCtx();
+      const data = await callSuggest(ctx);
+      const latest = data?.generateDossierNo || "";
+      if (!latest) throw new Error("Không nhận được generateDossierNo");
+      cache.value = latest; cache.ts = Date.now(); cache.inflight = null;
+      return latest;
+    })();
+    cache.inflight = run;
+    try { return await run; } finally { cache.inflight = null; }
+  }
 
-    const input = getField();
-    if (!input) return;
-    try {
-      const bumped = safeNextFromField(input);
-      fillInput(input, bumped);
-      document.getElementById('idmod-refresh')?.click();
-    } catch(_) {}
+  // ---------- SINGLE SOURCE OF TRUTH ----------
+  function safeApplyToInput(latest, mod, residue){
+    const input = getCodeInput(); if (!input) return false;
+    const now = Date.now();
 
-    // Đặt lịch redirect (nếu bật). Nếu phát hiện duplicate -> cancel rồi retry.
-    scheduleRedirect();
-  }, true);
+    const cur = parseXXXX(latest);
+    const next = nextByMod(cur, mod, residue);
+    const newVal = replaceXXXX(latest, next);
 
-  // 2) Quan sát DOM để bắt thông điệp lỗi (kể cả toast)
-  const mo = new MutationObserver((mutations) => {
-    for (const m of mutations) {
-      for (const node of m.addedNodes) {
-        if (!(node instanceof Element)) continue;
-        const txt = (node.innerText || node.textContent || '').trim();
-        if (txt && ERROR_TEXT_REGEX.test(txt)) {
-          handleDuplicateFound('DOM');
-          return;
-        }
+    if (input.value.trim() === newVal) { setLabels(latest, newVal); return false; }
+    if (window.__MCT__.applyGuard.to === newVal && (now - window.__MCT__.applyGuard.ts) < APPLY_WINDOW) {
+      setLabels(latest, newVal); return false;
+    }
+    input.value = newVal;
+    window.__MCT__.applyGuard = { to:newVal, ts:now };
+    setLabels(latest, newVal);
+    return true;
+  }
+  async function applyLatestToField(force=false){
+    const latest = await MCT_getServerLatest(force);
+    safeApplyToInput(latest, CFG.MOD, CFG.RESIDUE);
+  }
+
+  // ---------- ROUTER / RENDER / SUBMIT / TOAST ----------
+  const ensureDebounced = debounce(async ()=>{
+    try { await applyLatestToField(false); }
+    catch (e) {
+      if (CFG.allowLocalFallback){
+        const input = getCodeInput(); if (!input) return;
+        const base = (input.value || "").trim();
+        const updated = replaceXXXX(base, nextByMod(parseXXXX(base), CFG.MOD, CFG.RESIDUE));
+        input.value = updated;
+        setLabels(base, updated);
       }
     }
-  });
-  mo.observe(document.documentElement, { childList: true, subtree: true });
+  }, 200);
 
-  // 3) Bắt lỗi từ response (fetch / XHR)
-  const _fetch = window.fetch;
-  window.fetch = async function(...args) {
-    try {
-      const res = await _fetch.apply(this, args);
-      const clone = res.clone();
-      clone.text().then(t => { if (ERROR_TEXT_REGEX.test(t)) handleDuplicateFound('fetch'); }).catch(()=>{});
-      return res;
-    } catch (err) { return Promise.reject(err); }
-  };
+  (function hookHistoryAndHash(){
+    addEventListener("hashchange", ensureDebounced);
+    const _ps = history.pushState, _rs = history.replaceState;
+    history.pushState = function(){ const r=_ps.apply(this,arguments); ensureDebounced(); return r; };
+    history.replaceState = function(){ const r=_rs.apply(this,arguments); ensureDebounced(); return r; };
+  })();
 
-  const _open = XMLHttpRequest.prototype.open;
-  const _send = XMLHttpRequest.prototype.send;
-  XMLHttpRequest.prototype.open = function(...args) { this.__url = args[1]; return _open.apply(this, args); };
-  XMLHttpRequest.prototype.send = function(...args) {
-    this.addEventListener('load', function() {
-      try {
-        const text = this.responseText || '';
-        if (ERROR_TEXT_REGEX.test(text)) handleDuplicateFound('xhr');
-      } catch(_) {}
+  function startFormObserver(){
+    if (startFormObserver.started) return; startFormObserver.started = true;
+    const root = document.getElementById("app_user_profile") || document.body;
+    new MutationObserver(()=>{ if (getCodeInput()) ensureDebounced(); })
+      .observe(root,{ childList:true, subtree:true });
+  }
+
+  function findSubmitButton(){
+    const byCfg = Array.from(document.querySelectorAll(CFG.submitSelector || ""))
+      .find(b => b && b.offsetParent !== null);
+    if (byCfg) return byCfg;
+    return Array.from(document.querySelectorAll("button,[role='button']"))
+      .find(b => /lưu lại/i.test(b.textContent || ""));
+  }
+  const clickSubmit = ()=> findSubmitButton()?.click();
+
+  if (!window.__MCT__.redirectTimer) window.__MCT__.redirectTimer = null;
+  function armRedirectAfterSave(){
+    if (!CFG.redirectAfterSave) return;
+    if (window.__MCT__.redirectTimer){ clearTimeout(window.__MCT__.redirectTimer); window.__MCT__.redirectTimer = null; }
+    window.__MCT__.redirectTimer = setTimeout(()=>{
+      window.__MCT__.redirectTimer = null;
+      location.assign(REDIRECT_URL);
+    }, 2500);
+  }
+
+  async function hookSubmitButton(){
+    try{
+      const btn = await waitFor(()=>findSubmitButton(), 15000, 200);
+      if (btn && !btn.__mctHooked){
+        btn.__mctHooked = true;
+        btn.addEventListener("click", async ()=>{
+          if (CFG.precomputeBeforeSubmit){
+            try { await applyLatestToField(false); } catch (e) {
+              if (CFG.allowLocalFallback){
+                const input = getCodeInput(); if (input){
+                  const base = (input.value || "").trim();
+                  const updated = replaceXXXX(base, nextByMod(parseXXXX(base), CFG.MOD, CFG.RESIDUE));
+                  input.value = updated;
+                  setLabels(base, updated);
+                }
+              }
+            }
+          }
+          armRedirectAfterSave();
+        }, true);
+      }
+    }catch{}
+  }
+  function keepHookingSubmit(){ hookSubmitButton(); setInterval(()=>hookSubmitButton(), 2000); }
+
+  function startToastObserver(){
+    if (startToastObserver.started) return; startToastObserver.started = true;
+    const re = new RegExp(CFG.errorTextRegex || "(mã hồ sơ|đã được sử dụng|trùng)", "i");
+    const obs = new MutationObserver((muts)=>{
+      for (const m of muts) for (const node of m.addedNodes){
+        if (!(node instanceof HTMLElement)) continue;
+        const t = node.textContent?.trim() || "";
+        if (!t || !re.test(t)) continue;
+
+        (async ()=>{
+          try { await applyLatestToField(true); }
+          catch {
+            if (CFG.allowLocalFallback){
+              const input = getCodeInput(); if (!input) return;
+              const base = (input.value || "").trim();
+              const updated = replaceXXXX(base, nextByMod(parseXXXX(base), CFG.MOD, CFG.RESIDUE));
+              input.value = updated; setLabels(base, updated);
+            }
+          }
+          if (CFG.autoResubmit){ setTimeout(()=>{ clickSubmit(); armRedirectAfterSave(); }, 200); }
+        })();
+      }
     });
-    return _send.apply(this, args);
-  };
+    obs.observe(document.body, { childList:true, subtree:true });
+  }
 
-  // 4) Reset khi chuyển route SPA
-  window.addEventListener('hashchange', () => { _retryCount = 0; cancelRedirect(); });
-}
-
-
-/***** ========= BOOT ========= *****/
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', () => main());
-} else {
-  main();
-}
-// SPA hash routing: khởi lại logic, không giữ state
-window.addEventListener('hashchange', () => setTimeout(() => main(), 0));
+  // ---------- BOOTSTRAP ----------
+  (async function bootstrap(){
+    await loadCfg();
+    buildPanel();
+    startFormObserver();
+    startToastObserver();
+    ensureDebounced();
+    keepHookingSubmit();
+  })();
 })();
