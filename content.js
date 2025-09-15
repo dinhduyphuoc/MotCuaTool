@@ -13,18 +13,20 @@
   const CONFIG_DEFAULTS = {
     MOD: 4,                      // tổng số "máy"
     RESIDUE: 0,                  // id máy hiện tại [0..MOD-1]
-    CODE_FIELD_SELECTOR: 'input[jf-ext-cache-id="10"]', // selector input mã hồ sơ (giữ đơn giản, không XPath)
+    // Ưu tiên dùng XPath bạn cung cấp cho ô Mã hồ sơ
+    XPATH: '//*[@id="app_user_profile"]/div[11]/main/div/div/div[2]/form/div[4]/div[2]/div[2]/div/div[1]/div/input',
+    CODE_FIELD_SELECTOR: 'input[jf-ext-cache-id="10"]', // fallback (CSS selector)
     SUBMIT_SELECTOR: "button[jf-ext-button-ct='lưu lại'], button[jf-ext-button-ct='lưu lại']",
-    REDIRECT_AFTER_SAVE: false,  // sau khi lưu có tự mở lại form ko
-    PRECOMPUTE_BEFORE_SUBMIT: true, // trước khi nhấn Lưu: bắt buộc lấy latest + áp dụng một lần
-    AUTO_RESUBMIT: false,        // nếu server báo trùng → tự nhấn lại (khuyên tắt)
-    ERROR_TEXT_REGEX: "(mã hồ sơ|đã được sử dụng|trùng)", // text phát hiện toast lỗi trùng
+    REDIRECT_AFTER_SAVE: false,
+    PRECOMPUTE_BEFORE_SUBMIT: true,
+    AUTO_RESUBMIT: false,
+    ERROR_TEXT_REGEX: "(mã hồ sơ|đã được sử dụng|trùng)",
     API_PATH: "/o/rest/v2/filestoregov/suggest-dossierno",
     REDIRECT_URL: "https://motcua.mod.gov.vn/web/mot-cua-bo-quoc-phong/qlkdl#/all/them-moi-giay-to",
-    CACHE_TTL_MS: 5000,          // cache latest trong 5s
-    DEBOUNCE_MS: 200,            // debounce khi router/mutation
-    WRITELOCK_MS: 120,           // khóa ghi ngắn hạn (tránh framework overwrite)
-    APPLY_WINDOW_MS: 1000,       // chống double-apply cùng giá trị
+    CACHE_TTL_MS: 5000,
+    DEBOUNCE_MS: 200,
+    WRITELOCK_MS: 120,
+    APPLY_WINDOW_MS: 1000,
   };
 
   // state runtime
@@ -58,10 +60,12 @@
     Object.assign(STATE.cfg, next);
     UI.updateHeader();
     UI.syncCheckboxes();
+    // Áp cấu hình mới ngay
+    try { ensure && ensure(); } catch (_) {}
   });
 
   // ─────────────────────────────────────────────────────────────────────────────
-  // 3) HELPERS: debounce, wait, selectors (không dùng XPath)
+  // 3) HELPERS: debounce, wait, selectors (CSS & XPath)
   // ─────────────────────────────────────────────────────────────────────────────
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
   const debounce = (fn, ms = STATE.cfg.DEBOUNCE_MS) => { let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a), ms); }; };
@@ -76,10 +80,71 @@
     }
     return null;
   }
-  const getCodeInput = () => document.querySelector(STATE.cfg.CODE_FIELD_SELECTOR);
+
+  function queryXPath(xpath, root = document) {
+    if (!xpath) return null;
+    try {
+      const r = document.evaluate(xpath, root, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+      const node = r.singleNodeValue;
+      if (!node) return null;
+      if (node instanceof HTMLInputElement) return node;
+      const inner = node.querySelector?.("input");
+      return inner instanceof HTMLInputElement ? inner : null;
+    } catch (e) {
+      console.warn("[MCT] Invalid XPATH:", xpath, e);
+      return null;
+    }
+  }
+
+  const getCodeInput = () => {
+    // 1) Ưu tiên XPATH trong config
+    const byXPath = queryXPath(STATE.cfg.XPATH);
+    if (byXPath && byXPath.offsetParent !== null) return byXPath;
+
+    // 2) Fallback: CSS selector trong config
+    const sel = STATE.cfg.CODE_FIELD_SELECTOR;
+    if (sel) {
+      try {
+        const byCss = document.querySelector(sel);
+        if (byCss && byCss.offsetParent !== null) return byCss;
+      } catch (e) {
+        console.warn("[MCT] Invalid CODE_FIELD_SELECTOR:", sel, e);
+      }
+    }
+
+    // 3) Fallback heuristics
+    const candidates = [
+      "input[jf-ext-cache-id='10']",
+      "input[placeholder*='Mã hồ sơ' i]",
+      "input[aria-label*='Mã hồ sơ' i]",
+      "input[name*='ma_ho_so' i]",
+      "input[name*='mahoso' i]",
+      "input[id*='mahoso' i]",
+    ];
+    for (const c of candidates) {
+      try {
+        const el = document.querySelector(c);
+        if (el && el.offsetParent !== null) return el;
+      } catch {}
+    }
+
+    // 4) Theo label
+    const labels = Array.from(document.querySelectorAll("label"))
+      .filter(l => /mã\s*hồ\s*sơ/i.test(l.textContent || ""));
+    for (const lb of labels) {
+      const forId = lb.getAttribute("for");
+      if (forId) {
+        const el = document.getElementById(forId);
+        if (el && el.tagName === "INPUT" && el.offsetParent !== null) return el;
+      }
+      const near = lb.querySelector("input") || lb.parentElement?.querySelector("input");
+      if (near && near.offsetParent !== null) return near;
+    }
+    return null;
+  };
 
   // ─────────────────────────────────────────────────────────────────────────────
-  // 4) NUMBERING: parse / replace / nextByMod (công thức chuẩn, không sai lệch)
+  // 4) NUMBERING
   // ─────────────────────────────────────────────────────────────────────────────
   const parseXXXX = (code) => {
     const m = String(code || "").match(/(\d+)\s*$/);
@@ -91,13 +156,13 @@
     if (!Number.isFinite(x)) x = 0;
     if (!Number.isFinite(mod) || mod < 1) mod = 1;
     if (!Number.isFinite(residue)) residue = 0;
-    residue = ((residue % mod) + mod) % mod; // chuẩn hóa
+    residue = ((residue % mod) + mod) % mod;
     const k = Math.floor((x - residue) / mod) + 1; // y > x & y ≡ residue (mod)
     return k * mod + residue;
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
-  // 5) CONTEXT BRIDGE: lấy token/groupId qua injected.js (CSP-safe)
+  // 5) CONTEXT BRIDGE
   // ─────────────────────────────────────────────────────────────────────────────
   (function initContextBridge(){
     try {
@@ -170,7 +235,7 @@
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
-  // 7) APPLY SERVICE (chống “nhảy lùi”, idempotent, epoch-cancel)
+  // 7) APPLY SERVICE (native setter + anti-revert)
   // ─────────────────────────────────────────────────────────────────────────────
   function safeApplyToInput(latest, mod, residue) {
     const input = getCodeInput();
@@ -181,7 +246,7 @@
     const newVal = replaceXXXX(latest, next);
 
     // Không ghi nếu trùng giá trị
-    const trimmed = input.value.trim();
+    const trimmed = (input.value || "").trim();
     if (trimmed === newVal || STATE.lastApplied === newVal) {
       UI.setLabels(latest, newVal);
       return false;
@@ -191,14 +256,36 @@
     if (STATE.writeLock) return false;
     STATE.writeLock = true;
 
-    input.value = newVal;
+    // Ghi bằng native setter để React/Vue nhận biết
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+    if (setter) setter.call(input, newVal); else input.value = newVal;
+    // Thông báo cho framework cập nhật state
+    input.dispatchEvent(new Event("input",  { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+
     STATE.lastApplied = newVal;
     STATE.applyGuard = { to: newVal, ts: Date.now() };
     UI.setLabels(latest, newVal);
 
     setTimeout(() => { STATE.writeLock = false; }, STATE.cfg.WRITELOCK_MS);
+
+    // Anti-revert window: nếu bị đè ngược nhanh → set lại 1 lần
+    const guardUntil = Date.now() + (STATE.cfg.APPLY_WINDOW_MS || 1000);
+    const tryFix = () => {
+      if (Date.now() > guardUntil) return;
+      if (((input.value || "").trim()) !== newVal) {
+        const setter2 = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+        if (setter2) setter2.call(input, newVal); else input.value = newVal;
+        input.dispatchEvent(new Event("input",  { bubbles: true }));
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+    };
+    setTimeout(tryFix, 0);
+    setTimeout(tryFix, 120);
+
     return true;
   }
+
   async function applyLatestToField(force = false) {
     const myEpoch = ++STATE.epoch;
     const latest = await getServerLatest(force).catch(()=>null);
@@ -216,7 +303,7 @@
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
-  // 8) UI PANEL (rất gọn, không rườm rà; mọi config chỉnh qua storage)
+  // 8) UI PANEL
   // ─────────────────────────────────────────────────────────────────────────────
   const UI = (() => {
     let panel, body, headerBtn, lblLatest, lblUpdated, btnUpdate, cbRedirect, cbPrecompute;
@@ -395,7 +482,7 @@
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
-  // 10) SUBMIT & TOAST (tối giản, chỉ dùng API; auto-resubmit là tùy chọn)
+  // 10) SUBMIT & TOAST
   // ─────────────────────────────────────────────────────────────────────────────
   function findSubmitButton() {
     const byCfg = Array.from(document.querySelectorAll(STATE.cfg.SUBMIT_SELECTOR || ""))
@@ -410,7 +497,8 @@
     btn.__mctHooked = true;
     btn.addEventListener("click", async () => {
       if (STATE.cfg.PRECOMPUTE_BEFORE_SUBMIT) {
-        await applyLatestToField(false).catch(()=>{ /* không fallback local */ });
+        // Ép bỏ cache để lấy latest thật sự trước khi submit
+        await applyLatestToField(true).catch(()=>{ /* ignore */ });
       }
       if (STATE.cfg.REDIRECT_AFTER_SAVE) {
         setTimeout(() => location.assign(STATE.cfg.REDIRECT_URL), 1000);
@@ -443,12 +531,12 @@
   // ─────────────────────────────────────────────────────────────────────────────
   (async function bootstrap(){
     await loadConfig();
-    UI.build();            // panel
-    UI.updateHeader();     // header text
-    hookRouter();          // SPA routing
-    startFormObserver();   // đợi form render
-    startToastObserver();  // nghe lỗi trùng -> refresh latest
-    keepHookingSubmit();   // gắn precompute trước khi Lưu
-    ensure();              // chạy 1 lần khi vào trang
+    UI.build();
+    UI.updateHeader();
+    hookRouter();
+    startFormObserver();
+    startToastObserver();
+    keepHookingSubmit();
+    ensure(); // chạy 1 lần khi vào trang
   })();
 })();

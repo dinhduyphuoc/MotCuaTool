@@ -3,27 +3,27 @@
   const DEF = {
     MOD: 4,
     RESIDUE: 0,
-    XPATH: "",
-    submitSelector: "button[jf-ext-button-ct='lưu lại'], button[jf-ext-button-ct='lưu lại']",
-    errorTextRegex: "(mã hồ sơ|đã được sử dụng|trùng)",
+    XPATH: '//*[@id="app_user_profile"]/div[11]/main/div/div/div[2]/form/div[4]/div[2]/div[2]/div/div[1]/div/input',
+    SUBMIT_SELECTOR: "button[jf-ext-button-ct='lưu lại'], button[jf-ext-button-ct='lưu lại']",
+    ERROR_TEXT_REGEX: "(mã hồ sơ|đã được sử dụng|trùng)",
     tableSelector: "div.v-card__text table tbody tr",
-    autoResubmit: true,
-    redirectAfterSave: false
+    AUTO_RESUBMIT: true,
+    REDIRECT_AFTER_SAVE: false
   };
 
   function $(id) { return document.getElementById(id); }
 
   function restore() {
-    chrome.storage.sync.get(null, (cfg) => {
-      const data = Object.assign({}, DEF, cfg || {});
-      els.MOD.value = data.MOD;
-      els.RESIDUE.value = data.RESIDUE;
-      els.XPATH.value = data.XPATH;
-      els.submitSelector.value = data.submitSelector;
-      els.errorTextRegex.value = data.errorTextRegex;
-      els.tableSelector.value = data.tableSelector;
-      els.autoResubmit.checked = !!data.autoResubmit;
-      els.redirectAfterSave.checked = !!data.redirectAfterSave;
+    chrome.storage.sync.get("MCT_CONFIG", (wrap) => {
+      const data = Object.assign({}, DEF, (wrap && wrap.MCT_CONFIG) || {});
+      els.MOD.value               = data.MOD;
+      els.RESIDUE.value           = data.RESIDUE;
+      els.XPATH.value             = data.XPATH || "";
+      els.submitSelector.value    = data.SUBMIT_SELECTOR || DEF.SUBMIT_SELECTOR;
+      els.errorTextRegex.value    = data.ERROR_TEXT_REGEX || DEF.ERROR_TEXT_REGEX;
+      els.tableSelector.value     = data.tableSelector || DEF.tableSelector;
+      els.autoResubmit.checked    = !!(data.AUTO_RESUBMIT ?? DEF.AUTO_RESUBMIT);
+      els.redirectAfterSave.checked = !!(data.REDIRECT_AFTER_SAVE ?? DEF.REDIRECT_AFTER_SAVE);
     });
   }
 
@@ -38,14 +38,14 @@
       MOD: mod,
       RESIDUE: residue,
       XPATH: (els.XPATH.value || "").trim(),
-      submitSelector: (els.submitSelector.value || "").trim(),
-      errorTextRegex: (els.errorTextRegex.value || "").trim(),
-      tableSelector: (els.tableSelector.value || "").trim(),
-      autoResubmit: !!els.autoResubmit.checked,
-      redirectAfterSave: !!els.redirectAfterSave.checked
+      SUBMIT_SELECTOR: (els.submitSelector.value || "").trim(),
+      ERROR_TEXT_REGEX: (els.errorTextRegex.value || "").trim(),
+      AUTO_RESUBMIT: !!els.autoResubmit.checked,
+      REDIRECT_AFTER_SAVE: !!els.redirectAfterSave.checked,
+      tableSelector: (els.tableSelector.value || "").trim()
     };
 
-    chrome.storage.sync.set(payload, () => {
+    chrome.storage.sync.set({ MCT_CONFIG: payload }, () => {
       if (chrome.runtime.lastError) setStatus("Lỗi lưu: " + chrome.runtime.lastError.message, true);
       else setStatus("Đã lưu ✔", false);
     });
