@@ -5,8 +5,6 @@
     RESIDUE: 0,
     XPATH: '//*[@id="app_user_profile"]/div[11]/main/div/div/div[2]/form/div[4]/div[2]/div[2]/div/div[1]/div/input',
     SUBMIT_SELECTOR: "button[jf-ext-button-ct='lưu lại'], button[jf-ext-button-ct='lưu lại']",
-    ERROR_TEXT_REGEX: "(mã hồ sơ|đã được sử dụng|trùng)",
-    tableSelector: "div.v-card__text table tbody tr",
     AUTO_RESUBMIT: true,
     REDIRECT_AFTER_SAVE: false
   };
@@ -20,8 +18,6 @@
       els.RESIDUE.value           = data.RESIDUE;
       els.XPATH.value             = data.XPATH || "";
       els.submitSelector.value    = data.SUBMIT_SELECTOR || DEF.SUBMIT_SELECTOR;
-      els.errorTextRegex.value    = data.ERROR_TEXT_REGEX || DEF.ERROR_TEXT_REGEX;
-      els.tableSelector.value     = data.tableSelector || DEF.tableSelector;
       els.autoResubmit.checked    = !!(data.AUTO_RESUBMIT ?? DEF.AUTO_RESUBMIT);
       els.redirectAfterSave.checked = !!(data.REDIRECT_AFTER_SAVE ?? DEF.REDIRECT_AFTER_SAVE);
     });
@@ -39,8 +35,6 @@
       RESIDUE: residue,
       XPATH: (els.XPATH.value || "").trim(),
       SUBMIT_SELECTOR: (els.submitSelector.value || "").trim(),
-      ERROR_TEXT_REGEX: (els.errorTextRegex.value || "").trim(),
-      AUTO_RESUBMIT: !!els.autoResubmit.checked,
       REDIRECT_AFTER_SAVE: !!els.redirectAfterSave.checked,
       tableSelector: (els.tableSelector.value || "").trim()
     };
@@ -64,9 +58,6 @@
     els.RESIDUE = $("RESIDUE");
     els.XPATH = $("XPATH");
     els.submitSelector = $("submitSelector");
-    els.errorTextRegex = $("errorTextRegex");
-    els.tableSelector = $("tableSelector");
-    els.autoResubmit = $("autoResubmit");
     els.redirectAfterSave = $("redirectAfterSave");
     els.save = $("save");
     els.status = $("status");

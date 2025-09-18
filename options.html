@@ -3,50 +3,32 @@
 <head>
   <meta charset="utf-8" />
   <title>MotCuaTool by Duy Phuoc – Cấu hình</title>
-  <style>
-    body { font: 14px/1.4 system-ui, sans-serif; padding: 16px; }
-    label { display:block; margin-top: 10px; }
-    input[type="number"], input[type="text"] { width: 520px; max-width: 100%; }
-    .hint { color:#666; font-size:12px; }
-    .ok { color:green; }
-    .err { color:#c00; }
-  </style>
+  <link rel="stylesheet" href="options.css" />
 </head>
 <body>
   <h2>Cấu hình</h2>
 
-  <label>MOD (tổng số máy/slot):
-    <input id="MOD" type="number" min="1" value="4" />
-  </label>
+  <label for="MOD">MOD (tổng số máy/slot):</label>
+  <input id="MOD" type="number" min="1" value="4" />
 
-  <label>Residue (chỉ số máy này, 0..MOD-1):
-    <input id="RESIDUE" type="number" min="0" value="0" />
-  </label>
+  <label for="RESIDUE">Residue (chỉ số máy này, 0..MOD-1):</label>
+  <input id="RESIDUE" type="number" min="0" value="0" />
   <div class="hint">Mỗi máy chọn một residue khác nhau để không trùng.</div>
 
-  <label>XPath ô “Mã hồ sơ”:
-    <input id="XPATH" type="text" placeholder="//*[@id='app_user_profile']/.../input hoặc //input[@jf-ext-cache-id='10']" />
-  </label>
+  <label for="XPATH">XPath ô “Mã hồ sơ”:</label>
+  <input id="XPATH" type="text" placeholder="//*[@id='app_user_profile']/.../input hoặc //input[@jf-ext-cache-id='10']" />
 
-  <label>CSS selector nút “Lưu lại”:
-    <input id="submitSelector" type="text" placeholder="mặc định: button[jf-ext-button-ct='lưu lại']" />
-  </label>
-
-  <label>Regex phát hiện lỗi trùng (toast):
-    <input id="errorTextRegex" type="text" placeholder="(mã hồ sơ|đã được sử dụng|trùng)" />
-  </label>
-
-  <label>Bảng “Danh sách mã hồ sơ” (selector dòng):
-    <input id="tableSelector" type="text" placeholder="div.v-card__text table tbody tr" />
-  </label>
-  <div class="hint">Mặc định quét cột 3 của mỗi hàng.</div>
+  <label for="submitSelector">CSS selector nút “Lưu lại”:</label>
+  <input id="submitSelector" type="text" placeholder="mặc định: button[jf-ext-button-ct='lưu lại']" />
 
   <label><input id="autoResubmit" type="checkbox" /> Tự động tăng mã &amp; bấm “Lưu lại” khi trùng (toast)</label>
   <label><input id="redirectAfterSave" type="checkbox" /> Sau khi bấm “Lưu lại” → tự redirect về trang thêm mới</label>
 
-  <p><button id="save">Lưu</button> <span id="status" aria-live="polite"></span></p>
+  <p>
+    <button id="save">Lưu</button>
+    <span id="status" aria-live="polite"></span>
+  </p>
 
   <script src="options.js"></script>
-  <script src="injected.js"></script> 
 </body>
 </html>

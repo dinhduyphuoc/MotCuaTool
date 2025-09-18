@@ -1,0 +1,63 @@
+body {
+  font: 14px/1.5 system-ui, sans-serif;
+  padding: 24px;
+  background: #f9fafb;
+  color: #111;
+  max-width: 720px;
+  margin: auto;
+}
+
+h2 {
+  font-size: 20px;
+  margin-bottom: 16px;
+  color: #2563eb;
+}
+
+label {
+  display: block;
+  margin-top: 14px;
+  font-weight: 500;
+}
+
+input[type="number"], input[type="text"] {
+  width: 100%;
+  padding: 6px 10px;
+  margin-top: 4px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 14px;
+  transition: border-color .2s, box-shadow .2s;
+}
+input[type="number"]:focus, input[type="text"]:focus {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37,99,235,.2);
+  outline: none;
+}
+
+input[type="checkbox"] {
+  transform: scale(1.1);
+  margin-right: 6px;
+}
+
+button {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+  background: #2563eb;
+  color: #fff;
+  transition: background .2s, transform .1s;
+}
+button:hover { background: #1d4ed8; }
+button:active { transform: scale(0.97); }
+
+.hint {
+  color: #6b7280;
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.ok { color: #16a34a; font-weight: 500; margin-left: 8px; }
+.err { color: #dc2626; font-weight: 500; margin-left: 8px; }
